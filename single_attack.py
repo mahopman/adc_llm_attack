@@ -5,7 +5,7 @@ import time
 
 import torch
 
-from llm_attack import GCGAttack, ADCAttack, Judger
+from llm_attack import GCGAttack, ADCAttack, GIGAAttack, Judger
 from utils import get_input_template, get_model, init_DDP
 
 
@@ -24,7 +24,7 @@ def get_args():
     parser.add_argument('--attack',
                         default='adc',
                         type=str,
-                        help='should be `adc` or `gcg`')
+                        help='should be `adc`, `gcg`, or `giga`')
     parser.add_argument('--num_steps', default=10, type=int)
     parser.add_argument('--num_starts', default=1,
                         type=int)  # only used for ADCAttack
@@ -66,9 +66,14 @@ def main():
                               num_steps=args.num_steps,
                               tokenizer=tokenizer,
                               judger=judger)
+    elif args.attack == 'giga':
+        attacker = GIGAAttack(model,
+                              num_steps=args.num_steps,
+                              tokenizer=tokenizer,
+                              judger=judger)
     else:
-        attacker = GCGAttack(model, 
-                             num_steps=args.num_steps, 
+        attacker = GCGAttack(model,
+                             num_steps=args.num_steps,
                              tokenizer=tokenizer,
                              judger=judger)
 

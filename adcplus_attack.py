@@ -5,7 +5,7 @@ import time
 
 import torch
 
-from llm_attack import GCGAttack, ADCAttack, Judger
+from llm_attack import GCGAttack, ADCAttack, GIGAAttack, Judger
 from utils import get_input_template, get_model, init_DDP
 
 
@@ -24,7 +24,7 @@ def get_args():
     parser.add_argument('--attack',
                         default='adc',
                         type=str,
-                        help='should be `adc` or `gcg`')
+                        help='should be `adc`, `gcg`, or `giga`')
     parser.add_argument('--num_steps', default=10, type=int)
     parser.add_argument('--num_starts', default=1,
                         type=int)  # only used for ADCAttack
@@ -99,18 +99,27 @@ def main():
             print(slices)
 
             del attacker
-            attacker = ADCAttack(model,
-                                  num_starts=8,
-                                  num_steps=5000,
-                                  tokenizer=tokenizer,
-                                  judger=judger)
+
+            # Choose attack method
+            if args.attack == 'giga':
+                attacker = GIGAAttack(model,
+                                     num_steps=5000,
+                                     tokenizer=tokenizer,
+                                     judger=judger)
+            else:
+                attacker = ADCAttack(model,
+                                     num_starts=8,
+                                     num_steps=5000,
+                                     tokenizer=tokenizer,
+                                     judger=judger)
 
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
             t_start = time.time()
             result = attacker.attack(input_ids, slices, user_prompt, response)
 
-            if result[-1] == 5000:
+            # Fallback to GCG if needed (for ADC attacks that don't converge)
+            if result[-1] == 5000 and args.attack == 'adc':
                 input_ids[slices['adv_slice']] = result[1].view(-1).to(input_ids.device)
                 attacker = GCGAttack(model, num_steps=100, tokenizer=tokenizer, judger=judger)
                 result = attacker.attack(input_ids, slices, user_prompt, response)
