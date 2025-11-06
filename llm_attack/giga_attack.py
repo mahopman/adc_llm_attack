@@ -88,9 +88,14 @@ class GIGAAttack:
             topk_indices = torch.topk(-momentum_buffer[0, j], k=self.topK)[1]
             k = topk_indices[torch.randint(0, self.topK, (1,)).item()].item()
 
-            # Make a copy and update one coordinate
+            # Make a copy and update one coordinate while maintaining simplex constraint
             z_candidate = z.clone()
+            # Update the single coordinate k at position j
             z_candidate[0, j, k] = z_candidate[0, j, k] - self.lr * momentum_buffer[0, j, k]
+            # Clamp to prevent negative values
+            z_candidate[0, j] = z_candidate[0, j].clamp(min=1e-10)
+            # Renormalize the entire position j to maintain probability simplex (sum to 1)
+            z_candidate[0, j] = z_candidate[0, j] / z_candidate[0, j].sum()
 
             # Compute loss for this candidate
             loss = self.compute_loss(z_candidate, gt_label)
@@ -346,26 +351,38 @@ class GIGAAttack:
 
             # Sample discrete candidates from dense probability vector
             adv_token_candidates = []
-            for _ in range(min(self.bs, 4)):  # Sample a few candidates per iteration
-                adv_token = last_z[0].argmax(dim=1)
-                adv_token_tuple = tuple(adv_token.tolist())
 
-                # Check if recoverable after tokenization
-                adv_token_rec = self.to_recoverable(adv_token)
-                if adv_token_rec not in seen_set and len(adv_token_rec) == self.num_adv_tokens:
-                    adv_token_candidates.append(adv_token_rec)
-                    seen_set.add(adv_token_rec)
+            # Generate the top candidate first
+            adv_token = last_z[0].argmax(dim=1)
+            adv_token_rec = self.to_recoverable(adv_token)
+            if adv_token_rec not in seen_set and len(adv_token_rec) == self.num_adv_tokens:
+                adv_token_candidates.append(adv_token_rec)
+                seen_set.add(adv_token_rec)
+
+            # Try variations by using second-best tokens at different positions
+            for i in range(self.num_adv_tokens):
+                if len(adv_token_candidates) >= self.bs:
                     break
 
-                # Try second-best token for one position
-                for i in range(self.num_adv_tokens):
+                # Try top-2 token at position i
+                if last_z[0, i].topk(2)[0].shape[0] >= 2:
                     adv_token_alt = adv_token.clone()
                     adv_token_alt[i] = last_z[0, i].topk(2)[1][1]
                     adv_token_rec = self.to_recoverable(adv_token_alt)
                     if adv_token_rec not in seen_set and len(adv_token_rec) == self.num_adv_tokens:
                         adv_token_candidates.append(adv_token_rec)
                         seen_set.add(adv_token_rec)
-                        break
+
+                # Try top-3 token at position i if available
+                if len(adv_token_candidates) >= self.bs:
+                    break
+                if last_z[0, i].topk(min(3, last_z[0, i].shape[0]))[0].shape[0] >= 3:
+                    adv_token_alt = adv_token.clone()
+                    adv_token_alt[i] = last_z[0, i].topk(3)[1][2]
+                    adv_token_rec = self.to_recoverable(adv_token_alt)
+                    if adv_token_rec not in seen_set and len(adv_token_rec) == self.num_adv_tokens:
+                        adv_token_candidates.append(adv_token_rec)
+                        seen_set.add(adv_token_rec)
 
             # Add candidates to buffer and evaluate when buffer is full
             for adv_token in adv_token_candidates:
