@@ -6,6 +6,25 @@ This is a draft implementation of our paper
 
 An official implementation will be ready soon.
 
+## Setup
+
+This project uses [uv](https://github.com/astral-sh/uv) for fast, reliable Python dependency management.
+
+### Installation
+
+1. Install dependencies:
+```bash
+uv sync
+```
+
+2. Activate the virtual environment:
+```bash
+source .venv/bin/activate
+# or use the convenience script:
+source activate.sh
+```
+
+
 ## GIGA Attack Implementation
 
 This repository now includes an implementation of **GIGA (Generalizable Infectious Gradient Attack)** from the paper:
@@ -21,6 +40,11 @@ GIGA is designed for creating self-propagating adversarial inputs that can compr
 - **RMS loss**: Uses root mean square loss for implicit reweighting
 
 ### Usage
+
+Make sure to activate the virtual environment first:
+```bash
+source .venv/bin/activate
+```
 
 Run GIGA attack:
 ```bash
