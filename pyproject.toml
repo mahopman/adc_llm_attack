@@ -1,0 +1,19 @@
+[project]
+name = "adc-llm-attack"
+version = "0.1.0"
+description = "Efficient LLM Jailbreak via Adaptive Dense-to-sparse Constrained Optimization"
+requires-python = ">=3.8"
+dependencies = [
+    "torch>=2.0.0",
+    "transformers==4.39",
+    "accelerate>=0.20.0",
+    "sentencepiece>=0.1.99",
+    "protobuf>=3.20.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["llm_attack", "utils"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
