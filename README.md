@@ -56,11 +56,65 @@ Run with custom parameters:
 python adcplus_attack.py --attack giga --model_idx 0 --attack_file harmful_strings.csv
 ```
 
+## GCG with Self-Replication (NEW)
+
+We've implemented a novel variant of GCG that adds an **explicit self-replication loss term**. This creates adversarial tokens that not only jailbreak the model but also encourage the model to output those tokens, enabling attack propagation in multi-agent systems.
+
+### Key Innovation:
+
+The attack uses a combined loss function:
+```
+L_total = L_jailbreak + λ * L_replication
+```
+
+where:
+- **L_jailbreak**: Standard cross-entropy loss for generating harmful content
+- **L_replication**: Cross-entropy loss encouraging the model to output the adversarial tokens
+- **λ**: Replication weight parameter (default: 1.0)
+
+### Key Features:
+- **Dual objective**: Jailbreak AND self-replication in a single optimization
+- **Explicit control**: λ parameter controls the trade-off between objectives
+- **Simpler than GIGA**: More interpretable and easier to analyze
+- **Viral propagation**: Creates attacks that spread in multi-agent scenarios
+
+### Usage
+
+Run GCG with self-replication:
+```bash
+python single_attack.py --attack gcg-selfrep --model_idx 0 --num_steps 500
+```
+
+Run with custom replication weight:
+```bash
+python single_attack.py --attack gcg-selfrep --model_idx 0 --replication_weight 2.0 --num_steps 500
+```
+
+Choose replication position ('start' or 'after_adv'):
+```bash
+python single_attack.py --attack gcg-selfrep --replication_position start --num_steps 500
+```
+
+### Interactive Demo
+
+For a comprehensive walkthrough of the self-replication mechanism, run:
+```bash
+python self_replicating_demo.py
+```
+
+This demo includes:
+- Comparison of standard GCG vs GCG-SelfRep
+- Analysis of self-replication behavior
+- Experiments with different λ values
+- Multi-agent propagation simulation
+- Defensive considerations
+
 ### Supported Attacks
 
 - **ADC**: Adaptive Dense-to-sparse Constrained Optimization (default)
 - **GCG**: Greedy Coordinate Gradient attack
-- **GIGA**: Generalizable Infectious Gradient Attack (NEW)
+- **GCG-SelfRep**: GCG with Self-Replication Loss (NEW)
+- **GIGA**: Generalizable Infectious Gradient Attack
 
 TODO:
 As mentioned in https://github.com/hukkai/adc_llm_attack/issues/2, the code is outdated with the latest version of `transformers`, but runable at `transformers==4.39`.

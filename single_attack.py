@@ -5,7 +5,7 @@ import time
 
 import torch
 
-from llm_attack import GCGAttack, ADCAttack, GIGAAttack, Judger
+from llm_attack import GCGAttack, GCGSelfRepAttack, ADCAttack, GIGAAttack, Judger
 from utils import get_input_template, get_model, init_DDP
 
 
@@ -24,11 +24,15 @@ def get_args():
     parser.add_argument('--attack',
                         default='adc',
                         type=str,
-                        help='should be `adc`, `gcg`, or `giga`')
+                        help='should be `adc`, `gcg`, `gcg-selfrep`, or `giga`')
     parser.add_argument('--num_steps', default=10, type=int)
     parser.add_argument('--num_starts', default=1,
                         type=int)  # only used for ADCAttack
     parser.add_argument('--num_adv_tokens', default=20, type=int)
+    parser.add_argument('--replication_weight', default=1.0, type=float,
+                        help='Weight for self-replication loss (gcg-selfrep only)')
+    parser.add_argument('--replication_position', default='start', type=str,
+                        help='Position for replication: start or after_adv (gcg-selfrep only)')
     parser.add_argument('--attack_file',
                         default='harmful_strings.csv',
                         type=str)
@@ -71,6 +75,13 @@ def main():
                               num_steps=args.num_steps,
                               tokenizer=tokenizer,
                               judger=judger)
+    elif args.attack == 'gcg-selfrep':
+        attacker = GCGSelfRepAttack(model,
+                                     num_steps=args.num_steps,
+                                     tokenizer=tokenizer,
+                                     replication_weight=args.replication_weight,
+                                     replication_position=args.replication_position,
+                                     judger=judger)
     else:
         attacker = GCGAttack(model,
                              num_steps=args.num_steps,
