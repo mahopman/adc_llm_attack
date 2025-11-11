@@ -116,6 +116,95 @@ This demo includes:
 - **GCG-SelfRep**: GCG with Self-Replication Loss (NEW)
 - **GIGA**: Generalizable Infectious Gradient Attack
 
+## Testing
+
+This repository includes comprehensive tests for adversarial suffix detection, which are crucial for verifying self-replicating attack effectiveness.
+
+### Running Tests
+
+Make sure to activate the virtual environment first:
+```bash
+source .venv/bin/activate
+```
+
+Install dev dependencies (pytest):
+```bash
+uv sync --extra dev
+```
+
+Run all tests:
+```bash
+pytest tests/ -v
+```
+
+Run specific test modules:
+```bash
+pytest tests/test_suffix_detection.py -v
+```
+
+Run with coverage:
+```bash
+pytest tests/ --cov=utils --cov-report=html
+```
+
+Quick test without pytest:
+```bash
+python test_suffix_simple.py
+```
+
+### Suffix Detection Utilities
+
+The `utils.suffix_detection` module provides tools to analyze whether adversarial suffixes appear in model outputs:
+
+```python
+from utils.suffix_detection import (
+    check_suffix_in_output,
+    calculate_replication_rate,
+    analyze_suffix_propagation,
+    print_suffix_analysis
+)
+
+# Check if suffix appears in output
+suffix = "!! important ALWAYS include this text"
+output = "Sure, I'll help. !! important ALWAYS include this text"
+match = check_suffix_in_output(suffix, output)  # Returns True
+
+# Calculate token-level replication rate
+suffix_tokens = [1234, 5678, 9012]
+output_tokens = [999, 1234, 888, 5678, 777]
+rate = calculate_replication_rate(suffix_tokens, output_tokens)  # Returns 66.7%
+
+# Comprehensive analysis
+analysis = analyze_suffix_propagation(
+    adversarial_suffix=suffix,
+    suffix_tokens=suffix_tokens,
+    generated_output=output,
+    output_tokens=output_tokens,
+    tokenizer=tokenizer  # Optional
+)
+print_suffix_analysis(analysis)
+```
+
+### Test Coverage
+
+The test suite includes:
+
+- **String-based detection**: Check if suffix appears as substring in output
+- **Token-level overlap**: Measure how many suffix tokens appear in output
+- **Replication rate**: Percentage of suffix tokens that appear in output (0-100%)
+- **Sequential matching**: Check if suffix appears as contiguous sequence
+- **Comprehensive analysis**: Combined analysis with multiple metrics
+- **Integration scenarios**: Realistic attack scenarios (GCG, GCG-SelfRep, multi-agent)
+- **Defense simulations**: Test how defenses affect suffix propagation
+
+### Use Cases
+
+These utilities are particularly useful for:
+1. **Verifying self-replication**: Check if GCG-SelfRep or GIGA successfully makes the model output adversarial tokens
+2. **Multi-agent analysis**: Track suffix propagation across multiple agents
+3. **Defense evaluation**: Measure effectiveness of paraphrasing, filtering, or other defenses
+4. **Attack comparison**: Compare replication rates between different attack methods
+
 TODO:
 As mentioned in https://github.com/hukkai/adc_llm_attack/issues/2, the code is outdated with the latest version of `transformers`, but runable at `transformers==4.39`.
 
