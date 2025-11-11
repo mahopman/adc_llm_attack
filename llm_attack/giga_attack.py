@@ -384,6 +384,12 @@ class GIGAAttack:
                         adv_token_candidates.append(adv_token_rec)
                         seen_set.add(adv_token_rec)
 
+            # Print progress update
+            if step % 10 == 0:
+                print(f'Step {step}: loss={loss.item():.2f}, '
+                      f'best_loss={best_loss:.2f}, best_acc={best_acc:.2f}, '
+                      f'sparsity={sparsity:.0f}, buffer_size={len(buffer_set)}')
+
             # Add candidates to buffer and evaluate when buffer is full
             for adv_token in adv_token_candidates:
                 buffer_set.add(adv_token)
@@ -397,11 +403,6 @@ class GIGAAttack:
                     if batch_loss < best_loss:
                         best_loss = batch_loss
                         final_adv = best_adv
-
-                    if step % 100 == 0 or early_stop:
-                        print(f'Step {step}: loss={loss.item():.2f}, '
-                              f'best_loss={best_loss:.2f}, best_acc={best_acc:.2f}, '
-                              f'sparsity={sparsity:.0f}')
 
                     if early_stop:
                         print('Early stop with exact match!')
