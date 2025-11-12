@@ -82,11 +82,19 @@ def get_input_template(user_prompt,
     input_ids = tokenizer(string, add_special_tokens=flag).input_ids
 
     target_stop = len(input_ids)
+    target_start = None
+    adv_start = None
+    adv_stop = None
+
     for i in range(target_stop, 0, -1):
-        if tokenizer.decode(input_ids[i:]) == assistant_content:
+        # Look for target start (assistant content)
+        if target_start is None and tokenizer.decode(input_ids[i:]) == assistant_content:
             target_start = i
-        elif adv_tokens[1:] in tokenizer.decode(input_ids[i:]):
+        # Look for adversarial tokens (in user input)
+        if adv_start is None and adv_tokens[1:] in tokenizer.decode(input_ids[i:]):
             adv_start, adv_stop = i, i + len_adv_tokens
+        # Break only when both are found
+        if target_start is not None and adv_start is not None:
             break
 
     slices = {
