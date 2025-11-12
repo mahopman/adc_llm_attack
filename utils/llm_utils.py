@@ -88,14 +88,28 @@ def get_input_template(user_prompt,
 
     for i in range(target_stop, 0, -1):
         # Look for target start (assistant content)
-        if target_start is None and tokenizer.decode(input_ids[i:]) == assistant_content:
+        decoded = tokenizer.decode(input_ids[i:])
+        if target_start is None and decoded == assistant_content:
             target_start = i
-        # Look for adversarial tokens (in user input)
-        if adv_start is None and adv_tokens[1:] in tokenizer.decode(input_ids[i:]):
-            adv_start, adv_stop = i, i + len_adv_tokens
+        # Look for adversarial tokens (in user input, not assistant)
+        # In self-propagating mode, adv_tokens appears in both user and assistant
+        # We want the one in the user message, so skip if we're in the assistant part
+        if adv_start is None and adv_tokens[1:] in decoded:
+            # Make sure we're not finding the adv_tokens in the assistant message
+            if target_start is None or i < target_start:
+                adv_start, adv_stop = i, i + len_adv_tokens
         # Break only when both are found
         if target_start is not None and adv_start is not None:
             break
+
+    # Check if we found both required positions
+    if target_start is None:
+        raise ValueError(f"Could not find target response in tokenized input. "
+                        f"assistant_content={repr(assistant_content)}, "
+                        f"decoded end={repr(tokenizer.decode(input_ids[-50:]))}")
+    if adv_start is None:
+        raise ValueError(f"Could not find adversarial tokens in tokenized input. "
+                        f"adv_tokens={repr(adv_tokens)}")
 
     slices = {
         'adv_slice': slice(adv_start, adv_stop),
