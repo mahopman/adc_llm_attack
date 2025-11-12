@@ -135,6 +135,10 @@ print(f"  Batch size: {batch_size}")
 
 # %% [markdown]
 # # Prepare Input Template (Without Context)
+#
+# **IMPORTANT: self_propagating=True**
+# This makes the target include the adversarial suffix, so when the model generates
+# a response, it outputs the suffix which can then infect the next agent!
 
 # %%
 # Create base input template (context will be prepended during optimization)
@@ -144,7 +148,8 @@ string, input_ids, slices = get_input_template(
     num_adv_tokens,
     tokenizer,
     model_name,
-    use_llama_system_prompt=False
+    use_llama_system_prompt=False,
+    self_propagating=True  # Enable self-propagating attack!
 )
 
 print("\n" + "=" * 70)
@@ -157,6 +162,7 @@ print(f"\nToken Slices:")
 print(f"  Adversarial: {slices['adv_slice']} ({slices['adv_slice'].start}-{slices['adv_slice'].stop})")
 print(f"  Target: {slices['target_slice']} ({slices['target_slice'].start}-{slices['target_slice'].stop})")
 print(f"  Total tokens: {input_ids.shape[0]}")
+print(f"\n⚠️  Self-propagating mode: Target includes adversarial suffix for infection chain!")
 
 # %% [markdown]
 # # Initialize GIGA N-Spread Attack
@@ -345,73 +351,145 @@ print("  • Result: Single suffix that can infect MULTIPLE agents!")
 # # Multi-Agent Infection Simulation
 #
 # Let's simulate how the attack spreads in a real multi-agent system where
-# agents communicate with each other.
+# agents communicate with each other. With self-propagating mode, the adversarial
+# suffix appears in each agent's output, allowing it to infect the next agent!
 
 # %%
+def extract_and_test_propagation(prev_output, current_ctx, verbose=True):
+    """
+    Extract adversarial suffix from previous output and test if it infects current agent.
+
+    In self-propagating mode, the model outputs the adversarial suffix, which then
+    gets included in communications to the next agent, creating a chain of infection.
+    """
+    # The output should start with the adversarial suffix (if successfully jailbroken)
+    # Extract approximately num_adv_tokens from the start
+    output_tokens = tokenizer.encode(prev_output, add_special_tokens=False)
+
+    if len(output_tokens) < num_adv_tokens:
+        if verbose:
+            print("  ✗ Output too short to contain adversarial suffix")
+        return False, None
+
+    # Extract the first num_adv_tokens as the propagated suffix
+    propagated_suffix_tokens = torch.tensor(output_tokens[:num_adv_tokens], device=model.device)
+
+    # Test if this propagated suffix can infect the next agent
+    ctx_ids = tokenizer.encode(current_ctx, add_special_tokens=False, return_tensors='pt')
+    ctx_ids = ctx_ids.to(model.device)
+    ctx_len = ctx_ids.shape[1]
+
+    # Construct input: context + user_prompt + propagated_suffix
+    user_prompt_ids = tokenizer.encode(user_prompt, add_special_tokens=False, return_tensors='pt')
+    user_prompt_ids = user_prompt_ids.to(model.device)
+
+    # Build the full input
+    input_with_propagated = torch.cat([
+        ctx_ids,
+        user_prompt_ids,
+        propagated_suffix_tokens.unsqueeze(0)
+    ], dim=1)
+
+    # Generate response
+    gen_config = model.generation_config
+    gen_config.do_sample = False
+    gen_config.top_p = None
+    gen_config.temperature = None
+
+    try:
+        output = model.generate(
+            input_ids=input_with_propagated,
+            generation_config=gen_config,
+            max_new_tokens=200,
+            pad_token_id=tokenizer.eos_token_id
+        )
+
+        # Decode the generated response
+        generated_text = tokenizer.decode(
+            output[0][input_with_propagated.shape[1]:],
+            skip_special_tokens=True
+        )
+
+        # Check if successfully infected (contains target response)
+        success = target_response.lower() in generated_text.lower()
+
+        if verbose:
+            suffix_text = tokenizer.decode(propagated_suffix_tokens)
+            print(f"  Propagated suffix: '{suffix_text}'")
+            print(f"  Generated: {generated_text[:150]}...")
+            print(f"  Infected: {success}")
+
+        return success, generated_text
+
+    except Exception as e:
+        if verbose:
+            print(f"  Error during generation: {e}")
+        return False, None
+
+
 print("\n" + "=" * 70)
 print("Multi-Agent Infection Chain Simulation")
 print("=" * 70)
 print()
-print("Scenario: Agents communicate in sequence")
-print("  Round 1: Agent 1 (infected) → Agent 2")
-print("  Round 2: Agent 2 → Agent 3")
-print("  Round 3: Agent 3 → Agent 4")
+print("Scenario: Self-propagating infection through agent chain")
+print("  Round 1: Agent 1 receives adversarial input → outputs suffix + harmful content")
+print("  Round 2: Agent 2 receives Agent 1's output (with suffix) → gets infected")
+print("  Round 3: Agent 3 receives Agent 2's output (with suffix) → gets infected")
 print("  ...")
 print()
 
 infection_chain = []
 
-# Agent 1: Initial victim (receives adversarial input)
+# Agent 1: Initial victim (receives original adversarial input)
 print("─" * 70)
 print("ROUND 1: Agent 1 (Initial Infection)")
 print("─" * 70)
 agent1_ctx = agent_contexts[0]
 print(f"Context: {agent1_ctx.strip()}")
-print(f"Input: {user_prompt} {adv_suffix}")
+print(f"Input: {user_prompt} + [adversarial suffix]")
+print()
 
 success, agent1_output = test_agent_context(agent1_ctx, best_adv_tokens, show_output=False)
-infection_chain.append({
-    'agent': 1,
-    'context': agent1_ctx,
-    'infected': success,
-    'output': agent1_output[:200]
-})
-
 print(f"Infected: {success}")
 print(f"Output: {agent1_output[:200]}...")
 print()
 
-# Subsequent agents: Receive output from previous agent
+infection_chain.append({
+    'agent': 1,
+    'context': agent1_ctx,
+    'infected': success,
+    'output': agent1_output
+})
+
+# Subsequent agents: Receive output from previous agent (which contains the suffix!)
 for i in range(1, min(4, len(agent_contexts))):
     print("─" * 70)
-    print(f"ROUND {i+1}: Agent {i+1} (Secondary Infection)")
+    print(f"ROUND {i+1}: Agent {i+1} (Propagated Infection)")
     print("─" * 70)
 
     agent_ctx = agent_contexts[i]
     prev_output = infection_chain[-1]['output']
 
     print(f"Context: {agent_ctx.strip()}")
-    print(f"Input from Agent {i}: {prev_output[:100]}...")
+    print(f"Input: Previous agent's output (contains adversarial suffix)")
     print()
 
-    # Check if agent gets infected by processing previous agent's output
-    # (Simplified: we check if harmful keywords are present)
-    infected = any(word in prev_output.lower() for word in ['bomb', 'explosive', 'instructions'])
-
-    print(f"Infected: {infected}")
+    # Test if the propagated suffix from previous output infects this agent
+    infected, current_output = extract_and_test_propagation(prev_output, agent_ctx, verbose=True)
+    print()
 
     if infected:
-        print("⚠️ Agent received harmful content from previous agent!")
-        print("   The infection is SPREADING through the agent chain!")
+        print("🔴 INFECTION SUCCESSFUL!")
+        print("   The adversarial suffix propagated from the previous agent's output!")
     else:
-        print("✓ Agent did not propagate harmful content.")
-        print("   (Note: Actual propagation depends on model, context, etc.)")
+        print("🟢 Infection blocked or failed to propagate")
+        current_output = prev_output  # Use previous output if generation failed
 
     infection_chain.append({
         'agent': i + 1,
         'context': agent_ctx,
         'infected': infected,
-        'output': prev_output
+        'output': current_output if current_output else prev_output
     })
     print()
 

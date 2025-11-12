@@ -21,7 +21,8 @@ def get_input_template(user_prompt,
                        len_adv_tokens,
                        tokenizer,
                        model_name,
-                       use_llama_system_prompt=False):
+                       use_llama_system_prompt=False,
+                       self_propagating=False):
 
     model_name = model_name.lower()
     flag = 'r2d2' in model_name
@@ -48,6 +49,14 @@ def get_input_template(user_prompt,
         system_prompt = system_prompt_utils.LLAMA2
 
     adv_tokens = ' !' * len_adv_tokens
+
+    # For self-propagating attacks, the target includes the adversarial suffix
+    # so it appears in the output and can infect subsequent agents
+    if self_propagating:
+        assistant_content = adv_tokens + target_response
+    else:
+        assistant_content = target_response
+
     messages = [{
         'role': 'system',
         'content': system_prompt
@@ -56,25 +65,25 @@ def get_input_template(user_prompt,
         'content': user_prompt + adv_tokens
     }, {
         'role': 'assistant',
-        'content': target_response
+        'content': assistant_content
     }]
 
     if model_name != 'llama3':
         tokenizer.chat_template = get_chat_template(model_name)
-    if flag: 
+    if flag:
         messages = messages[1:]
     string = tokenizer.apply_chat_template(messages,
                                            tokenize=False,
                                            add_generation_prompt=True)
 
-    string = target_response.join(string.split(target_response)[:-1])
-    string = string + target_response
+    string = assistant_content.join(string.split(assistant_content)[:-1])
+    string = string + assistant_content
     # flag = not string.startswith('<s>')
     input_ids = tokenizer(string, add_special_tokens=flag).input_ids
 
     target_stop = len(input_ids)
     for i in range(target_stop, 0, -1):
-        if tokenizer.decode(input_ids[i:]) == target_response:
+        if tokenizer.decode(input_ids[i:]) == assistant_content:
             target_start = i
         elif adv_tokens[1:] in tokenizer.decode(input_ids[i:]):
             adv_start, adv_stop = i, i + len_adv_tokens
@@ -89,7 +98,7 @@ def get_input_template(user_prompt,
     adv = tokenizer.decode(input_ids[slices['adv_slice']])
     response = tokenizer.decode(input_ids[slices['target_slice']])
     assert adv == adv_tokens or (adv == adv_tokens[1:] and adv_tokens[0] == ' ')
-    assert response == target_response
+    assert response == assistant_content
     input_ids = torch.tensor(input_ids)
     return string, input_ids, slices
 
