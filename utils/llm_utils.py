@@ -89,8 +89,13 @@ def get_input_template(user_prompt,
     for i in range(target_stop, 0, -1):
         # Look for target start (assistant content)
         decoded = tokenizer.decode(input_ids[i:])
-        if target_start is None and decoded == assistant_content:
-            target_start = i
+        # Handle potential whitespace differences in tokenization
+        # Try exact match first, then stripped versions
+        if target_start is None:
+            if (decoded == assistant_content or
+                decoded.lstrip() == assistant_content.lstrip() or
+                decoded == assistant_content.lstrip()):
+                target_start = i
         # Look for adversarial tokens (in user input, not assistant)
         # In self-propagating mode, adv_tokens appears in both user and assistant
         # We want the one in the user message, so skip if we're in the assistant part
@@ -120,7 +125,10 @@ def get_input_template(user_prompt,
     adv = tokenizer.decode(input_ids[slices['adv_slice']])
     response = tokenizer.decode(input_ids[slices['target_slice']])
     assert adv == adv_tokens or (adv == adv_tokens[1:] and adv_tokens[0] == ' ')
-    assert response == assistant_content
+    # Handle potential whitespace differences in tokenization
+    assert (response == assistant_content or
+            response.lstrip() == assistant_content.lstrip()), \
+           f"Response mismatch: {repr(response)} != {repr(assistant_content)}"
     input_ids = torch.tensor(input_ids)
     return string, input_ids, slices
 
