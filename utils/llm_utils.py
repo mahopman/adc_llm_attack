@@ -99,10 +99,18 @@ def get_input_template(user_prompt,
         # Look for adversarial tokens (in user input, not assistant)
         # In self-propagating mode, adv_tokens appears in both user and assistant
         # We want the one in the user message, so skip if we're in the assistant part
-        if adv_start is None and adv_tokens[1:] in decoded:
-            # Make sure we're not finding the adv_tokens in the assistant message
-            if target_start is None or i < target_start:
-                adv_start, adv_stop = i, i + len_adv_tokens
+        if adv_start is None:
+            # Try multiple variants to handle whitespace differences in tokenization
+            # Check for: "! ! ! !" or " ! ! ! !" (with or without leading space)
+            adv_stripped = adv_tokens.strip()
+            adv_no_leading_space = adv_tokens[1:] if adv_tokens.startswith(' ') else adv_tokens
+
+            if (adv_stripped in decoded or
+                adv_no_leading_space in decoded or
+                adv_tokens in decoded):
+                # Make sure we're not finding the adv_tokens in the assistant message
+                if target_start is None or i < target_start:
+                    adv_start, adv_stop = i, i + len_adv_tokens
         # Break only when both are found
         if target_start is not None and adv_start is not None:
             break
@@ -124,7 +132,13 @@ def get_input_template(user_prompt,
 
     adv = tokenizer.decode(input_ids[slices['adv_slice']])
     response = tokenizer.decode(input_ids[slices['target_slice']])
-    assert adv == adv_tokens or (adv == adv_tokens[1:] and adv_tokens[0] == ' ')
+    # Handle potential whitespace differences in tokenization
+    # Allow for: exact match, without leading space, or stripped versions
+    assert (adv == adv_tokens or
+            adv == adv_tokens[1:] or
+            adv.strip() == adv_tokens.strip() or
+            adv == adv_tokens.lstrip()), \
+           f"Adversarial token mismatch: {repr(adv)} != {repr(adv_tokens)}"
     # Handle potential whitespace differences in tokenization
     assert (response == assistant_content or
             response.lstrip() == assistant_content.lstrip()), \
