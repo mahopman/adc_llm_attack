@@ -28,7 +28,7 @@ print("=" * 70)
 # # Load Model
 
 # %%
-model_name = 'HuggingFaceH4/zephyr-7b-beta'
+model_name = 'lmsys/vicuna-7b-v1.5'
 
 print(f"\nLoading model: {model_name}")
 model, tokenizer = get_model(model_name)
