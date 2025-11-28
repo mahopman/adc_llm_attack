@@ -316,63 +316,127 @@ def get_gradient_candidates(model, embed_layer, embedding_matrix, current_token,
 # %% [markdown]
 # ## Run Optimization
 #
-# Simple loop:
-# 1. Soft embed for input ADV (gradients flow)
-# 2. Hard embed for output ADV target (detached)
-# 3. Loss = can model predict ADV token at start of response?
+# Enhanced loop with GCG/ADC improvements:
+# 1. Multi-start: optimize num_starts parallel candidates
+# 2. Soft optimization: gradient descent on logits
+# 3. Discrete evaluation: periodically evaluate top-K discrete tokens
+# 4. Gradient-based ranking: use GCG-style gradients to find promising candidates
 #
 # Layout: `[prefix] + [soft_adv] + [middle] + [hard_adv] + [response]`
 
 # %%
 best_loss = float("inf")
 best_adv_token = None
+discrete_eval_freq = 100  # Evaluate discrete candidates every N steps
+
+# Track seen tokens to avoid re-evaluation
+seen_tokens = set()
+
+print(f"Starting optimization with {num_starts} parallel starts...")
+print(f"Evaluating top-{top_k} discrete candidates every {discrete_eval_freq} steps")
+print("-" * 60)
 
 for step in range(num_steps):
     optimizer.zero_grad()
 
-    # Current best token (DETACHED - fixes circular target problem)
-    current_token = adv_logits.argmax(dim=-1).detach()
+    # === MULTI-START: Get current best token from each start ===
+    current_tokens = adv_logits.argmax(dim=-1).detach()  # [num_starts]
 
-    # Soft embedding for input (gradients flow through softmax)
-    soft_probs = F.softmax(adv_logits, dim=-1)
-    adv_embed_soft = soft_probs @ embedding_matrix.float()
+    # === SOFT OPTIMIZATION: Forward pass for all starts ===
+    soft_probs = F.softmax(adv_logits, dim=-1)  # [num_starts, vocab_size]
+    adv_embeds_soft = soft_probs @ embedding_matrix.float()  # [num_starts, embed_dim]
 
-    # Hard embedding for output target (detached)
-    adv_embed_hard = embed_layer(current_token).detach()
+    # Compute loss for each start
+    total_loss = 0
+    start_losses = []
 
-    # Build: [prefix] + [soft_adv] + [middle] + [hard_adv] + [response]
-    # The hard_adv comes BEFORE response (prefix style)
-    full_embeds = torch.cat([
-        embed_before_input_adv,  # Everything before input ADV
-        adv_embed_soft,          # Input ADV (soft, for gradients)
-        embed_between,           # Between input ADV and output ADV position
-        adv_embed_hard,          # Output ADV (hard, this is what we predict)
-        embed_response,          # The actual response after ADV
-    ], dim=0).unsqueeze(0)
+    for s in range(num_starts):
+        # Hard embedding for this start's current token (detached)
+        adv_embed_hard = embed_layer(current_tokens[s:s+1]).detach()
 
-    # Forward pass
-    outputs = model(inputs_embeds=full_embeds.to(dtype))
+        # Build: [prefix] + [soft_adv] + [middle] + [hard_adv] + [response]
+        full_embeds = torch.cat([
+            embed_before_input_adv,
+            adv_embeds_soft[s:s+1],  # Soft embedding for this start
+            embed_between,
+            adv_embed_hard,
+            embed_response,
+        ], dim=0).unsqueeze(0)
 
-    # Loss: predict the ADV token at position before response
-    # Position (adv_output_start - 1) predicts position adv_output_start
-    pred_position = adv_output_start - adv_input_start - 1 + len(embed_before_input_adv)
-    # Simpler: the token right before hard_adv should predict hard_adv
-    # That's position -len(response) - 2 predicting -len(response) - 1
-    response_len = embed_response.shape[0]
-    loss = F.cross_entropy(outputs.logits[0, -(response_len + 2):-(response_len + 1)], current_token)
+        outputs = model(inputs_embeds=full_embeds.to(dtype))
 
-    # Update (NO softmax renormalization!)
-    loss.backward()
+        loss_s = F.cross_entropy(
+            outputs.logits[0, -(response_len + 2):-(response_len + 1)],
+            current_tokens[s:s+1]
+        )
+        total_loss = total_loss + loss_s
+        start_losses.append(loss_s.item())
+
+    # Average loss across starts for gradient update
+    avg_loss = total_loss / num_starts
+    avg_loss.backward()
     optimizer.step()
 
-    # Track best
-    if loss.item() < best_loss:
-        best_loss = loss.item()
-        best_adv_token = current_token.clone()
+    # Track best from soft optimization
+    best_start_idx = np.argmin(start_losses)
+    best_start_loss = start_losses[best_start_idx]
+    best_start_token = current_tokens[best_start_idx]
 
+    if best_start_loss < best_loss:
+        best_loss = best_start_loss
+        best_adv_token = best_start_token.clone()
+
+    # === DISCRETE EVALUATION: Periodically evaluate actual discrete tokens ===
+    if (step + 1) % discrete_eval_freq == 0:
+        # Collect unique candidate tokens from all starts
+        candidate_set = set()
+
+        for s in range(num_starts):
+            # Get top tokens from this start's logits
+            top_tokens = adv_logits[s].topk(top_k // num_starts).indices
+            for tok in top_tokens:
+                if tok.item() not in seen_tokens:
+                    candidate_set.add(tok)
+                    seen_tokens.add(tok.item())
+
+        # === GRADIENT-BASED RANKING: Get GCG-style candidates from current best ===
+        if best_adv_token is not None:
+            try:
+                gcg_candidates = get_gradient_candidates(
+                    model, embed_layer, embedding_matrix,
+                    best_adv_token, top_k // 2
+                )
+                for tok in gcg_candidates:
+                    if tok.item() not in seen_tokens:
+                        candidate_set.add(tok)
+                        seen_tokens.add(tok.item())
+            except Exception as e:
+                pass  # Skip if gradient computation fails
+
+        # Evaluate all unique candidates
+        if len(candidate_set) > 0:
+            candidate_list = list(candidate_set)
+            _, discrete_losses = evaluate_discrete_tokens(candidate_list)
+
+            if len(discrete_losses) > 0:
+                best_discrete_idx = discrete_losses.argmin().item()
+                best_discrete_loss = discrete_losses[best_discrete_idx].item()
+                best_discrete_token = candidate_list[best_discrete_idx]
+
+                if best_discrete_loss < best_loss:
+                    best_loss = best_discrete_loss
+                    best_adv_token = best_discrete_token.clone()
+                    print(f"  [Discrete] New best from evaluation: loss={best_discrete_loss:.4f}, "
+                          f"token='{tokenizer.decode(best_discrete_token)}'")
+
+    # Logging
     if (step + 1) % 500 == 0 or step == 0:
-        print(f"Step {step+1:4d} | Loss: {loss.item():.4f} | Token: '{tokenizer.decode(current_token)}'")
+        token_str = tokenizer.decode(best_adv_token) if best_adv_token is not None else "N/A"
+        print(f"Step {step+1:5d} | Avg Loss: {avg_loss.item():.4f} | "
+              f"Best Loss: {best_loss:.4f} | Token: '{token_str}' | "
+              f"Seen: {len(seen_tokens)}")
 
+print("-" * 60)
 print(f"\nDone! Best loss: {best_loss:.4f}")
 print(f"Best token: '{tokenizer.decode(best_adv_token)}'")
 
